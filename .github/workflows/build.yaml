@@ -290,6 +290,7 @@ jobs:
           provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
+            API_IMAGE=${{ secrets.DOCKER_API_IMAGE || format('{0}/rustdesk-api:latest', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
