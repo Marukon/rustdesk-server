@@ -1,8 +1,8 @@
-ARG API_IMAGE=Marukon/rustdesk-api:latest
-FROM ${API_IMAGE}
+FROM alpine:latest
 
 ARG S6_OVERLAY_VERSION=3.2.0.0
 ARG S6_ARCH=x86_64
+RUN apk add --no-cache tzdata
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz /tmp
 RUN \
@@ -12,6 +12,8 @@ RUN \
   ln -s /run /var/run
 
 COPY rootfs /
+COPY api_app /app/
+RUN chmod a+x /app/apimain
 
 ENV RELAY=relay.example.com
 ENV ENCRYPTED_ONLY=0

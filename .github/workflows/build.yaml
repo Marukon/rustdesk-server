@@ -214,12 +214,87 @@ jobs:
         with:
           draft: true
           files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
-            
+
+  build-api:
+    name: Build API - ${{ matrix.job.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { name: "amd64",   goarch: "amd64", goarm: "",  platform: "amd64" }
+          - { name: "arm64v8", goarch: "arm64", goarm: "",  platform: "arm64" }
+          - { name: "armv7",   goarch: "arm",   goarm: "7", platform: "armv7l" }
+    steps:
+      - name: Checkout API
+        uses: actions/checkout@v4
+        with:
+          repository: Marukon/rustdesk-api
+          path: rustdesk-api
+          ref: master
+
+      - name: Checkout Web Frontend
+        uses: actions/checkout@v4
+        with:
+          repository: Marukon/rustdesk-api-web
+          path: rustdesk-api/rustdesk-api-web
+          ref: master
+
+      - name: Set up Go environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Web Frontend
+        working-directory: rustdesk-api/rustdesk-api-web
+        run: |
+          npm install
+          npm run build
+          mkdir -p ../resources/admin/
+          cp -ar dist/* ../resources/admin/
+
+      - name: Build Go API binary
+        working-directory: rustdesk-api
+        run: |
+          go mod tidy
+          go install github.com/swaggo/swag/cmd/swag@latest
+          swag init -g cmd/apimain.go --output docs/api --instanceName api --exclude http/controller/admin
+          swag init -g cmd/apimain.go --output docs/admin --instanceName admin --exclude http/controller/api
+          mkdir -p release/data release/runtime
+          cp -ar resources release/
+          cp -ar docs release/
+          cp -ar conf release/
+          if [ "${{ matrix.job.platform }}" = "arm64" ]; then
+              wget -q https://musl.ljw.red/aarch64-linux-musl-cross.tgz
+              tar -xf aarch64-linux-musl-cross.tgz
+              export PATH=$PATH:$PWD/aarch64-linux-musl-cross/bin
+              GOOS=linux GOARCH=${{ matrix.job.goarch }} CC=aarch64-linux-musl-gcc CGO_LDFLAGS="-static" CGO_ENABLED=1 go build -ldflags "-s -w" -o ./release/apimain ./cmd/apimain.go
+          elif [ "${{ matrix.job.platform }}" = "armv7l" ]; then
+              wget -q https://musl.ljw.red/armv7l-linux-musleabihf-cross.tgz
+              tar -xf armv7l-linux-musleabihf-cross.tgz
+              export PATH=$PATH:$PWD/armv7l-linux-musleabihf-cross/bin
+              GOOS=linux GOARCH=${{ matrix.job.goarch }} GOARM=${{ matrix.job.goarm }} CC=armv7l-linux-musleabihf-gcc CGO_LDFLAGS="-static" CGO_ENABLED=1 go build -ldflags "-s -w" -o ./release/apimain ./cmd/apimain.go
+          else
+              sudo apt-get install musl musl-dev musl-tools -y
+              GOOS=linux GOARCH=${{ matrix.job.goarch }} CC=musl-gcc CGO_LDFLAGS="-static" CGO_ENABLED=1 go build -ldflags "-s -w" -o ./release/apimain ./cmd/apimain.go
+          fi
+
+      - name: Upload API Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-${{ matrix.job.name }}
+          path: rustdesk-api/release
+
   # docker build and push of single-arch images
   docker:
 
     name: Docker push - ${{ matrix.job.name }}
-    needs: build
+    needs: [build, build-api]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -243,8 +318,16 @@ jobs:
           name: binaries-linux-${{ matrix.job.name }}
           path: docker/rootfs/usr/bin
 
+      - name: Download API release
+        uses: actions/download-artifact@v4
+        with:
+          name: api-${{ matrix.job.name }}
+          path: docker/api_app
+
       - name: Make binaries executable
-        run: chmod -v a+x docker/rootfs/usr/bin/*
+        run: |
+          chmod -v a+x docker/rootfs/usr/bin/*
+          chmod -v a+x docker/api_app/apimain
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -282,7 +365,6 @@ jobs:
           provenance: false
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
-            API_IMAGE=${{ secrets.DOCKER_API_IMAGE || format('{0}/rustdesk-api:latest', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
           tags: |
             ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
@@ -316,29 +398,29 @@ jobs:
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          tags: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }} \
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7
 
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
-        uses: Noelware/docker-manifest-action@master
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          tags: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }} \
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7
 
       # manifest for :latest tag
       - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }} \
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7
 
             
   # docker build and push of single-arch images
@@ -437,29 +519,29 @@ jobs:
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }} \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
 
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
-        uses: Noelware/docker-manifest-action@master
         if: startsWith(github.ref, 'refs/tags/')
-        with:
-          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }} \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
 
       # manifest for :latest tag
       - name: Create and push manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
-          push: true
+        run: |
+          docker buildx imagetools create -t ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }} \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8 \
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
 
 
   deb-package:
