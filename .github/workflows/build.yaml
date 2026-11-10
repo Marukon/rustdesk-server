@@ -23,8 +23,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
-  GHCR_IMAGE: ghcr.io/rustdesk/rustdesk-server-s6
-  GHCR_IMAGE_CLASSIC: ghcr.io/rustdesk/rustdesk-server
+  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/rustdesk-server-s6
+  GHCR_IMAGE_CLASSIC: ghcr.io/${{ github.repository_owner }}/rustdesk-server
+  DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE || format('{0}/rustdesk-server-s6', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
+  DOCKER_IMAGE_CLASSIC: ${{ secrets.DOCKER_IMAGE_CLASSIC || format('{0}/rustdesk-server', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
   
 jobs:
 
@@ -254,22 +256,22 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: rustdesk
+          username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE }}
+          images: registry.hub.docker.com/${{ env.DOCKER_IMAGE }}
 
       - name: Get git tag
         id: vars
@@ -289,9 +291,9 @@ jobs:
           build-args: |
             S6_ARCH=${{ matrix.job.s6_platform }}
           tags: |
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
@@ -310,8 +312,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
 
       - name: Get git tag
         id: vars
@@ -335,36 +337,36 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          tags: ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
+          tags: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
           inputs: |
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,
-#            ${{ secrets.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,
+            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,
+#            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
           push: true
 
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
         uses: Noelware/docker-manifest-action@master
         with:
-          tags: ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
+          tags: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
           inputs: |
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,
-#            ${{ secrets.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,
+            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,
+#            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
           push: true
 
       # manifest for :latest tag
       - name: Create and push manifest (:latest)
         uses: Noelware/docker-manifest-action@master
         with:
-          tags: ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
+          tags: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
           inputs: |
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,
-            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,
-#            ${{ secrets.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,
+            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,
+#            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
           push: true
 
       # GHCR manifests
@@ -443,22 +445,22 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: rustdesk
+          username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: registry.hub.docker.com/${{ secrets.DOCKER_IMAGE_CLASSIC }}
+          images: registry.hub.docker.com/${{ env.DOCKER_IMAGE_CLASSIC }}
 
       - name: Get git tag
         id: vars
@@ -476,9 +478,9 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
+            ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
             ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
@@ -496,8 +498,8 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
 
       - name: Get git tag
         id: vars
@@ -521,24 +523,24 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         if: github.event_name != 'workflow_dispatch'
         with:
-          tags: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
+          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
+          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
           push: true
 
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
         uses: Noelware/docker-manifest-action@master
         with:
-          tags: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
+          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
+          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
           push: true
 
       # manifest for :latest tag
       - name: Create and push manifest (:latest)
         uses: Noelware/docker-manifest-action@master
         with:
-          tags: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          inputs: ${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ secrets.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
+          tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
+          inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
           push: true
 
       # GHCR manifests
