@@ -266,6 +266,7 @@ jobs:
           swag init -g cmd/apimain.go --output docs/api --instanceName api --exclude http/controller/admin
           swag init -g cmd/apimain.go --output docs/admin --instanceName admin --exclude http/controller/api
           mkdir -p release/data release/runtime
+          touch release/data/.gitkeep release/runtime/.gitkeep
           cp -ar resources release/
           cp -ar docs release/
           cp -ar conf release/

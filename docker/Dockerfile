@@ -13,7 +13,7 @@ RUN \
 
 COPY rootfs /
 COPY api_app /app/
-RUN chmod a+x /app/apimain
+RUN chmod a+x /app/apimain && mkdir -p /app/runtime /app/data
 
 ENV RELAY=relay.example.com
 ENV ENCRYPTED_ONLY=0
