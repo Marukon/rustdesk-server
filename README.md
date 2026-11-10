@@ -1,4 +1,3 @@
-
 # 关于此分支
 
 
@@ -70,7 +69,7 @@
   <a href="#如何创建密钥">密钥</a> •
   <a href="#deb-套件">Debian</a> •
   <a href="#ENV-环境参数">环境参数</a><br>
-  [<a href="README-EN.md">English</a>] | [<a href="README-DE.md">Deutsch</a>] | [<a href="README-NL.md">Nederlands</a>] | [<a href="README-TW.md">繁体中文</a>]<br>
+  [<a href="README-EN.md">English</a>]<br>
 </p>
 
 # RustDesk Server Program
@@ -80,6 +79,8 @@
 [**下载**](https://github.com/lejianwen/rustdesk-server/releases)
 
 [**说明文件**](https://rustdesk.com/docs/zh-cn/self-host/)
+
+[**配置与环境变量说明**](docs/environment-variables.md)
 
 自行搭建属于你的RustDesk服务器,所有的一切都是免费且开源的
 
@@ -410,5 +411,10 @@ Secret Key:  egAVd44u33ZEUIDTtksGcHeVeAwywarEdHmf99KM5ajwEsuG3NQFT9coAfiZ6nen4hf
 | PORT                  | hbbs/hbbr     | 监听端口（hbbs为21116，hbbr为21117）                      |
 | RELAY_SERVERS         | hbbs          | 运行hbbr的机器的IP地址/DNS名称（用逗号分隔）                      |
 | RUST_LOG              | all           | 设置 debug level (error\|warn\|info\|debug\|trace) |
+| BIND                  | hbbs/hbbr     | 监听的本地 IP 地址（默认：所有接口；需要 1.1.17+）               |
+| MUST_LOGIN            | hbbs          | 是否必须登录才能连接，默认为 "N"，设为 "Y" 则必须登录          |
+| RUSTDESK_API_JWT_KEY  | hbbs          | 设置后通过 JWT 校验客户端 token 的合法性                      |
 | SINGLE_BANDWIDTH      | hbbr          | 单个连接的最大带宽（以Mb/s为单位）                              |
 | TOTAL_BANDWIDTH       | hbbr          | 最大总带宽（以Mb/s为单位）                                  |
+
+详见 **[docs/environment-variables.md](docs/environment-variables.md)** 获取完整的环境变量列表、配置文件优先级规则、数据库和中继带宽调优等说明。
