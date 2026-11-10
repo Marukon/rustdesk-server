@@ -415,6 +415,10 @@ impl RendezvousServer {
                             }
                         }
                         Some(Err(err)) => {
+                            if is_ignorable_udp_error(&err) {
+                                log::debug!("udp ignorable failure: {}", err);
+                                continue;
+                            }
                             log::error!("udp failure: {}", err);
                             return LoopFailure::UdpSocket;
                         }
@@ -723,13 +727,25 @@ impl RendezvousServer {
                     }
                     log::trace!("KeyExchange their_pk: {:?}", hex::encode(&ex.keys[0]));
                     log::trace!("KeyExchange box: {:?}", hex::encode(&ex.keys[1]));
-                    let their_pk: [u8; 32] = ex.keys[0].to_vec().try_into().unwrap();
-                    let cryptobox: [u8; 48] = ex.keys[1].to_vec().try_into().unwrap();
-                    let symetric_key = get_symetric_key_from_msg(
+                    let their_pk: Option<[u8; 32]> = ex.keys[0].to_vec().try_into().ok();
+                    let cryptobox: Option<[u8; 48]> = ex.keys[1].to_vec().try_into().ok();
+                    let (their_pk, cryptobox) = match (their_pk, cryptobox) {
+                        (Some(p), Some(c)) => (p, c),
+                        _ => {
+                            log::error!(
+                                "Handshake failed: invalid key lengths in phase 2 key exchange message"
+                            );
+                            return false;
+                        }
+                    };
+                    let symetric_key = match get_symetric_key_from_msg(
                         self.inner.secure_tcp_sk_b.0,
                         their_pk,
                         &cryptobox,
-                    );
+                    ) {
+                        Some(key) => key,
+                        None => return false,
+                    };
                     log::debug!("KeyExchange symetric key: {:?}", hex::encode(&symetric_key));
                     let key = secretbox::Key::from_slice(&symetric_key);
                     match key {
@@ -985,6 +1001,24 @@ impl RendezvousServer {
     }
 
     #[inline]
+    async fn query_share_peer(peer_id: &str) -> bool {
+        static API_URL: Lazy<String> = Lazy::new(|| {
+            std::env::var("RUSTDESK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:21114".to_string())
+        });
+        let url = format!("{}/api/query-share-peer?peer_id={}", *API_URL, peer_id);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1500))
+            .build()
+            .unwrap_or_default();
+        if let Ok(resp) = client.get(&url).header("Accept", "application/json").send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                return json["code"].as_i64().unwrap_or(101) == 0;
+            }
+        }
+        false
+    }
+
+    #[inline]
     async fn handle_punch_hole_request(
         &mut self,
         addr: SocketAddr,
@@ -1003,7 +1037,12 @@ impl RendezvousServer {
             return Ok((msg_out, None));
         }
         // if secret is not empty check token by jwt
-        if MUST_LOGIN.load(Ordering::SeqCst) {
+        let is_shared = if MUST_LOGIN.load(Ordering::SeqCst) && ph.token.is_empty() {
+            Self::query_share_peer(&ph.id).await
+        } else {
+            false
+        };
+        if !is_shared && MUST_LOGIN.load(Ordering::SeqCst) {
             if ph.token.is_empty() {
                 let mut msg_out = RendezvousMessage::new();
                 msg_out.set_punch_hole_response(PunchHoleResponse {
@@ -1501,9 +1540,14 @@ impl RendezvousServer {
                     .get("X-Real-IP")
                     .or_else(|| headers.get("X-Forwarded-For"))
                     .and_then(|header_value| header_value.to_str().ok());
+                let real_port = headers
+                    .get("X-Real-Port")
+                    .and_then(|header_value| header_value.to_str().ok())
+                    .and_then(|p| p.parse::<u16>().ok());
                 if let Some(ip) = real_ip {
                     if let Ok(ip) = ip.parse() {
-                        addr = SocketAddr::new(ip, addr.port());
+                        let port = real_port.unwrap_or_else(|| addr.port());
+                        addr = SocketAddr::new(ip, port);
                     }
                 }
                 Ok(response)
@@ -1740,6 +1784,33 @@ async fn send_rk_res(
     socket.send(&msg_out, addr).await
 }
 
+// Windows converts ICMP-related transport failures into fatal socket errors and reports
+// them on the next recv/send of the same socket, while linux discards such ICMP silently.
+// WSAECONNRESET(10054) comes from ICMP "port unreachable" on a prior send; WSAENETRESET
+// (10052) comes from keep-alive detecting a network-level failure. Neither tells anything
+// about our own socket's health, recreating it only drops the packets arriving in between,
+// so just ignore them as linux does.
+fn is_ignorable_udp_error(err: &hbb_common::anyhow::Error) -> bool {
+    match err.downcast_ref::<std::io::Error>() {
+        Some(err) => {
+            matches!(
+                err.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionAborted
+            )
+                // WSAECONNRESET(10054): ICMP port-unreachable on prior send.
+                // WSAENETRESET(10052): keep-alive detected network failure.
+                // Both are ICMP-derived, non-fatal to our socket, same as linux silent discard.
+                || matches!(
+                    err.raw_os_error(),
+                    Some(10054 | 10052)
+                )
+        }
+        None => false,
+    }
+}
+
 async fn create_udp_listener(
     bind_addr: Option<IpAddr>,
     port: i32,
@@ -1771,7 +1842,7 @@ fn get_symetric_key_from_msg(
     our_sk_b: [u8; 32],
     their_pk_b: [u8; 32],
     sealed_value: &[u8; 48],
-) -> [u8; 32] {
+) -> Option<[u8; 32]> {
     let their_pk_b = box_::PublicKey(their_pk_b);
     let nonce = box_::Nonce([0u8; box_::NONCEBYTES]);
     let sk = box_::SecretKey(our_sk_b);
@@ -1780,9 +1851,12 @@ fn get_symetric_key_from_msg(
         Ok(key) => {
             let mut key_array = [0u8; 32];
             key_array.copy_from_slice(&key);
-            key_array
+            Some(key_array)
         }
-        Err(e) => panic!("Error while opening the seal key{:?}", e),
+        Err(e) => {
+            log::error!("Handshake failed: failed to open the sealed key: {:?}", e);
+            None
+        }
     }
 }
 
