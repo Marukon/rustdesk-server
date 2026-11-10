@@ -629,6 +629,10 @@ impl RendezvousServer {
                         );
                         return false;
                     }
+                    if Self::is_mobile_peer(&rf.id).await {
+                        log::warn!("Drop RequestRelay to mobile peer {} from {}", rf.id, addr);
+                        return false;
+                    }
                     // there maybe several attempt, so sink can be none
                     if let Some(sink) = sink.take() {
                         self.tcp_punch.lock().await.insert(try_into_v4(addr), sink);
@@ -1019,6 +1023,45 @@ impl RendezvousServer {
     }
 
     #[inline]
+    async fn is_mobile_peer(peer_id: &str) -> bool {
+        static MOBILE_CACHE: Lazy<tokio::sync::Mutex<HashMap<String, (bool, std::time::Instant)>>> =
+            Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+        {
+            let cache = MOBILE_CACHE.lock().await;
+            if let Some((is_mobile, instant)) = cache.get(peer_id) {
+                if instant.elapsed().as_secs() < 60 {
+                    return *is_mobile;
+                }
+            }
+        }
+
+        static API_URL: Lazy<String> = Lazy::new(|| {
+            std::env::var("RUSTDESK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:21114".to_string())
+        });
+        let url = format!("{}/api/peer-check?peer_id={}", *API_URL, peer_id);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(1500))
+            .build()
+            .unwrap_or_default();
+        let mut is_mobile = false;
+        if let Ok(resp) = client.get(&url).header("Accept", "application/json").send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                if json["code"].as_i64().unwrap_or(0) == 403 {
+                    is_mobile = true;
+                }
+            }
+        }
+
+        {
+            let mut cache = MOBILE_CACHE.lock().await;
+            cache.insert(peer_id.to_string(), (is_mobile, std::time::Instant::now()));
+        }
+
+        is_mobile
+    }
+
+    #[inline]
     async fn handle_punch_hole_request(
         &mut self,
         addr: SocketAddr,
@@ -1065,6 +1108,15 @@ impl RendezvousServer {
             }
         }
         let id = ph.id;
+        if Self::is_mobile_peer(&id).await {
+            log::warn!("Connection rejected from {} for mobile peer {}", addr, id);
+            let mut msg_out = RendezvousMessage::new();
+            msg_out.set_punch_hole_response(PunchHoleResponse {
+                other_failure: String::from("Connecting to mobile device is not allowed!"),
+                ..Default::default()
+            });
+            return Ok((msg_out, None));
+        }
         // punch hole request from A, relay to B,
         // check if in same intranet first,
         // fetch local addrs if in same intranet.
