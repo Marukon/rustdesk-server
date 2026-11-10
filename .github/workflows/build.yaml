@@ -8,7 +8,7 @@ name: build
 # DOCKER_HUB_PASSWORD is a token you should create under "account settings / security" with read/write access
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 on:
@@ -23,8 +23,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   LATEST_TAG: latest
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/rustdesk-server-s6
-  GHCR_IMAGE_CLASSIC: ghcr.io/${{ github.repository_owner }}/rustdesk-server
   DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE || format('{0}/rustdesk-server-s6', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
   DOCKER_IMAGE_CLASSIC: ${{ secrets.DOCKER_IMAGE_CLASSIC || format('{0}/rustdesk-server', secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME || github.repository_owner) }}
   
@@ -84,6 +82,7 @@ jobs:
 
   build-win:
     name: Build - windows
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-2022
 
     steps:
@@ -177,6 +176,7 @@ jobs:
   release:
 
     name: Github release
+    if: startsWith(github.ref, 'refs/tags/')
     needs: 
       - build
       - build-win
@@ -258,14 +258,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -295,9 +287,6 @@ jobs:
             ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # docker build and push of multiarch images
@@ -324,38 +313,23 @@ jobs:
           echo "GIT_TAG=$T" >> $GITHUB_ENV
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion)
         uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tags: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}
-          inputs: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,
-            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,
-            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7,
-#            ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-i386
+          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.GIT_TAG }}-armv7
           push: true
 
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
         uses: Noelware/docker-manifest-action@master
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tags: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}
-          inputs: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,
-            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,
-            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7,
-#            ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-i386
+          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.MAJOR_TAG }}-armv7
           push: true
 
       # manifest for :latest tag
@@ -363,46 +337,7 @@ jobs:
         uses: Noelware/docker-manifest-action@master
         with:
           tags: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}
-          inputs: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,
-            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,
-            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7,
-#            ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-i386
-          push: true
-
-      # GHCR manifests
-      # manifest for :1.2.3 tag
-      - name: Create and push GHCR manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tags: ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}
-          inputs: |
-            ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}-amd64,
-            ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}-arm64v8,
-            ${{ env.GHCR_IMAGE }}:${{ env.GIT_TAG }}-armv7
-          push: true
-
-      # manifest for :1 tag (major release)
-      - name: Create and push GHCR manifest (:major)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}
-          inputs: |
-            ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}-amd64,
-            ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}-arm64v8,
-            ${{ env.GHCR_IMAGE }}:${{ env.MAJOR_TAG }}-armv7
-          push: true
-
-      # manifest for :latest tag
-      - name: Create and push GHCR manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}
-          inputs: |
-            ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}-amd64,
-            ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,
-            ${{ env.GHCR_IMAGE }}:${{ env.LATEST_TAG }}-armv7
+          inputs: ${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE }}:${{ env.LATEST_TAG }}-armv7
           push: true
 
             
@@ -449,14 +384,6 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME || secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD || secrets.DOCKER_ACCESS_TOKEN }}
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-        
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4
@@ -482,16 +409,13 @@ jobs:
             ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
             ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-${{ matrix.job.name }}
-            ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-${{ matrix.job.name }}
           labels: ${{ steps.meta.outputs.labels }}
 
   # docker build and push of multiarch images
   docker-manifest-classic:
 
     name: Docker manifest classic
-    needs: docker
+    needs: docker-classic
     runs-on: ubuntu-24.04
     steps:
 
@@ -510,19 +434,11 @@ jobs:
           echo "GIT_TAG=$T" >> $GITHUB_ENV
           echo "MAJOR_TAG=$M" >> $GITHUB_ENV
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       # manifest for :1.2.3 tag
       #  this has to run only if invoked by a new tag
       - name: Create and push manifest (:ve.rs.ion)
         uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
           inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
@@ -531,6 +447,7 @@ jobs:
       # manifest for :1 tag (major release)
       - name: Create and push manifest (:major)
         uses: Noelware/docker-manifest-action@master
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           tags: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
           inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
@@ -544,36 +461,11 @@ jobs:
           inputs: ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
           push: true
 
-      # GHCR manifests
-      # manifest for :1.2.3 tag
-      - name: Create and push GHCR manifest (:ve.rs.ion)
-        uses: Noelware/docker-manifest-action@master
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tags: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}
-          inputs: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.GIT_TAG }}-armv7
-          push: true
-
-      # manifest for :1 tag (major release)
-      - name: Create and push GHCR manifest (:major)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}
-          inputs: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.MAJOR_TAG }}-armv7
-          push: true
-
-      # manifest for :latest tag
-      - name: Create and push GHCR manifest (:latest)
-        uses: Noelware/docker-manifest-action@master
-        with:
-          tags: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}
-          inputs: ${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-amd64,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8,${{ env.GHCR_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
-          push: true
-
 
   deb-package:
 
     name: debian package - ${{ matrix.job.name }}
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-24.04
     strategy:
