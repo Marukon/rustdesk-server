@@ -8,12 +8,19 @@ name: build
 # DOCKER_HUB_PASSWORD is a token you should create under "account settings / security" with read/write access
 
 permissions:
-  contents: write
+  contents: read
   packages: write
+  actions: write
 
 on:
   workflow_dispatch:
   push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '.github/**'
+      - 'README*.md'
+      - 'docs/**'
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+'
@@ -40,7 +47,7 @@ jobs:
           - { name: "amd64",   target: "x86_64-unknown-linux-musl" }
           - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
           - { name: "armv7",   target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386",    target: "i686-unknown-linux-musl" }
+          #- { name: "i386",    target: "i686-unknown-linux-musl" }
           #- { name: "amd64fb",    target: "x86_64-unknown-freebsd" }
 
     steps:
@@ -79,141 +86,7 @@ jobs:
             target/${{ matrix.job.target }}/release/hbbs
             target/${{ matrix.job.target }}/release/rustdesk-utils
           if-no-files-found: error
-
-  build-win:
-    name: Build - windows
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-2022
-
-    steps:
-      
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-          default: true
-          components: rustfmt
-          profile: minimal
-          target: x86_64-pc-windows-msvc
-
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --all-features --target=x86_64-pc-windows-msvc
-          use-cross: true
-
-      - name: Install NSIS
-        run: |
-          iwr -useb get.scoop.sh -outfile 'install.ps1'
-          .\install.ps1 -RunAsAdmin
-          scoop update
-          scoop bucket add extras
-          scoop install nsis
-
-      - name: Install Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 16
-
-      - name: Sign exe files
-        uses: GermanBluefox/code-sign-action@v7
-        if: false
-        with:
-          certificate: '${{ secrets.WINDOWS_PFX_BASE64 }}'
-          password: '${{ secrets.WINDOWS_PFX_PASSWORD }}'
-          certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
-          folder: 'target\x86_64-pc-windows-msvc\release'
-          recursive: false
-
-      - name: Build UI browser file
-        run: |
-          npm i
-          npm run build
-        working-directory: ./ui/html
-
-      - name: Build UI setup file
-        run: |
-          rustup default nightly
-          cargo build --release
-          xcopy /y ..\target\x86_64-pc-windows-msvc\release\*.exe setup\bin\
-          xcopy /y target\release\*.exe setup\
-          mkdir setup\logs
-          makensis /V1 setup.nsi
-          mkdir SignOutput
-          mv RustDeskServer.Setup.exe SignOutput\
-          mv ..\target\x86_64-pc-windows-msvc\release\*.exe SignOutput\
-        working-directory: ./ui
-
-      - name: Sign UI setup file 
-        uses: GermanBluefox/code-sign-action@v7
-        if: false
-        with:
-          certificate: '${{ secrets.WINDOWS_PFX_BASE64 }}'
-          password: '${{ secrets.WINDOWS_PFX_PASSWORD }}'
-          certificatesha1: '${{ secrets.WINDOWS_PFX_SHA1_THUMBPRINT }}'
-          folder: './ui/SignOutput'
-          recursive: false
-
-      - name: Publish Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-windows-x86_64
-          path: |
-            ui\SignOutput\hbbr.exe
-            ui\SignOutput\hbbs.exe
-            ui\SignOutput\rustdesk-utils.exe
-            ui\SignOutput\RustDeskServer.Setup.exe
-          if-no-files-found: error
-
-  # github (draft) release with all binaries
-  release:
-
-    name: Github release
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: 
-      - build
-      - build-win
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { os: "linux", name: "amd64", suffix: "" }
-          - { os: "linux", name: "arm64v8", suffix: "" }
-          - { os: "linux", name: "armv7", suffix: "" }
-          - { os: "linux", name: "i386", suffix: "" }
-          #- { os: "linux", name: "amd64fb", suffix: "" }
-          - { os: "windows", name: "x86_64", suffix: "-unsigned" }
-          
-    steps:
-
-      - name: Download binaries (${{ matrix.job.os }} - ${{ matrix.job.name }})
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-${{ matrix.job.os }}-${{ matrix.job.name }}
-          path: ${{ matrix.job.name }}
-
-      - name: Exec chmod
-        run: chmod -v a+x ${{ matrix.job.name }}/*
-
-      - name: Pack files (${{ matrix.job.os }} - ${{ matrix.job.name }})
-        run: |
-          sudo apt update
-          DEBIAN_FRONTEND=noninteractive sudo apt install -y zip
-          zip ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip ${{ matrix.job.name }}/*
-
-      - name: Create Release (${{ matrix.job.os }} - (${{ matrix.job.name }})
-        uses: softprops/action-gh-release@v1
-        with:
-          draft: true
-          files: ${{ matrix.job.name }}/rustdesk-server-${{ matrix.job.os }}-${{ matrix.job.name }}${{ matrix.job.suffix }}.zip
+          retention-days: 1
 
   build-api:
     name: Build API - ${{ matrix.job.name }}
@@ -290,6 +163,7 @@ jobs:
         with:
           name: api-${{ matrix.job.name }}
           path: rustdesk-api/release
+          retention-days: 1
 
   # docker build and push of single-arch images
   docker:
@@ -544,57 +418,23 @@ jobs:
             ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-arm64v8 \
             ${{ env.DOCKER_IMAGE_CLASSIC }}:${{ env.LATEST_TAG }}-armv7
 
-
-  deb-package:
-
-    name: debian package - ${{ matrix.job.name }}
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+  cleanup-artifacts:
+    name: Cleanup Artifacts
+    needs: [docker-manifest, docker-manifest-classic]
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { name: "amd64",   debian_platform: "amd64",   crossbuild_package: "" }
-          - { name: "arm64v8", debian_platform: "arm64",   crossbuild_package: "crossbuild-essential-arm64" }
-          - { name: "armv7",   debian_platform: "armhf",   crossbuild_package: "crossbuild-essential-armhf" }
-          - { name: "i386",    debian_platform: "i386",    crossbuild_package: "crossbuild-essential-i386" }
-
+    if: always() && !cancelled() && (needs.docker-manifest.result == 'success' || needs.docker-manifest-classic.result == 'success')
+    permissions:
+      actions: write
     steps:
-
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Create packaging env
+      - name: Delete all run artifacts after Docker Hub push
         run: |
-          sudo apt update
-          DEBIAN_FRONTEND=noninteractive sudo apt install -y devscripts build-essential debhelper pkg-config ${{ matrix.job.crossbuild_package }}
-          mkdir -p debian-build/${{ matrix.job.name }}/bin
-
-      - name: Download binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-linux-${{ matrix.job.name }}
-          path: debian-build/${{ matrix.job.name }}/bin
-
-      - name: Build package for ${{ matrix.job.name }} arch
-        run: |
-          chmod -v a+x debian-build/${{ matrix.job.name }}/bin/*
-          cp -vr debian systemd debian-build/${{ matrix.job.name }}/
-          cat debian/control.tpl | sed 's/{{ ARCH }}/${{ matrix.job.debian_platform }}/' > debian-build/${{ matrix.job.name }}/debian/control
-          cd debian-build/${{ matrix.job.name }}/
-          debuild -i -us -uc -b -a${{ matrix.job.debian_platform }}
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          draft: true
-          files: |
-            debian-build/rustdesk-server-hbbr_*_${{ matrix.job.debian_platform }}.deb
-            debian-build/rustdesk-server-hbbs_*_${{ matrix.job.debian_platform }}.deb
-            debian-build/rustdesk-server-utils_*_${{ matrix.job.debian_platform }}.deb
+          echo "Cleaning up artifacts for run ${{ github.run_id }}..."
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[].id' | while read -r artifact_id; do
+              if [ -n "$artifact_id" ]; then
+                echo "Deleting artifact ID: $artifact_id"
+                gh api --method DELETE "repos/${{ github.repository }}/actions/artifacts/$artifact_id" || true
+              fi
+            done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
